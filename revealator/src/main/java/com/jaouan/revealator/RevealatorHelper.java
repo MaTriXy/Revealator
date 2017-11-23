@@ -2,6 +2,7 @@ package com.jaouan.revealator;
 
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
+import android.graphics.PointF;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.animation.AccelerateDecelerateInterpolator;
@@ -13,6 +14,9 @@ import android.view.animation.DecelerateInterpolator;
 import android.view.animation.ScaleAnimation;
 import android.view.animation.TranslateAnimation;
 
+import com.jaouan.revealator.animations.AnimationListenerAdapter;
+import com.jaouan.revealator.animations.BezierTranslateAnimation;
+
 import java.util.List;
 
 import io.codetail.animation.ViewAnimationUtils;
@@ -20,34 +24,44 @@ import io.codetail.animation.ViewAnimationUtils;
 /**
  * Helper for the revealator.
  */
-public class RevealatorHelper {
+final class RevealatorHelper {
 
     /**
-     * Helps to translate a view to another view.
-     *
-     * @param fromView From view.
-     * @param toView   Target view.
-     * @param duration Duration.
+     * Disallow instantiation.
      */
-    static void translateAndHideView(final View fromView, View toView, long duration) {
+    private RevealatorHelper() {
+    }
+
+    /**
+     * Helps to hide then translate a view to another view.
+     *
+     * @param fromView                       From view.
+     * @param toView                         Target view.
+     * @param duration                       Duration.
+     * @param curvedTranslation              Curved translation.
+     * @param controlPoint                   Curved angle.
+     * @param hideFromViewAtInterpolatedTime Start hiding from view interpolated time. Must be between 0 and 1.
+     * @param animationListener              Animation listener.
+     */
+    static void translateAndHideView(final View fromView, final View toView, final long duration, final boolean curvedTranslation, final PointF controlPoint, final float hideFromViewAtInterpolatedTime, final Animation.AnimationListener animationListener) {
         // - Determine translate delta.
-        int[] fromLocation = new int[2];
-        fromView.getLocationOnScreen(fromLocation);
-        int[] toLocation = new int[2];
-        toView.getLocationOnScreen(toLocation);
-        int toX = toLocation[0] - fromLocation[0] + toView.getMeasuredWidth() / 2 - fromView.getMeasuredWidth() / 2;
-        int toY = toLocation[1] - fromLocation[1] + toView.getMeasuredHeight() / 2 - fromView.getMeasuredHeight() / 2;
+        final PointF delta = getCenterLocationsDelta(fromView, toView);
 
         // - Prepare translate animation.
-        final TranslateAnimation translateAnimation = new TranslateAnimation(0, toX, 0, toY);
+        Animation translateAnimation;
+        if (curvedTranslation) {
+            translateAnimation = new BezierTranslateAnimation(0, delta.x, 0, delta.y, controlPoint);
+        } else {
+            translateAnimation = new TranslateAnimation(0, delta.x, 0, delta.y);
+        }
         translateAnimation.setDuration(duration);
         translateAnimation.setInterpolator(new AccelerateInterpolator());
 
         // - Prepare hide animation.
-        final ScaleAnimation hideAnimation = new ScaleAnimation(fromView.getScaleX(), 0, fromView.getScaleY(), 0, Animation.ABSOLUTE, toX + fromView.getMeasuredWidth() / 2, Animation.ABSOLUTE, toY + fromView.getMeasuredHeight() / 2);
-        hideAnimation.setDuration(duration / 5);
-        hideAnimation.setStartOffset((long) (duration * 0.9));
-        hideAnimation.setInterpolator(new BounceInterpolator());
+        final ScaleAnimation hideAnimation = new ScaleAnimation(fromView.getScaleX(), 0, fromView.getScaleY(), 0, Animation.ABSOLUTE, delta.x + fromView.getMeasuredWidth() / 2, Animation.ABSOLUTE, delta.y + fromView.getMeasuredHeight() / 2);
+        hideAnimation.setDuration((long) (duration * Math.min(1, Math.max(0, 1 - hideFromViewAtInterpolatedTime))));
+        hideAnimation.setStartOffset((long) (duration * Math.min(1, Math.max(0, hideFromViewAtInterpolatedTime))));
+        hideAnimation.setInterpolator(new AccelerateInterpolator());
 
         // - Prepare animations set.
         final AnimationSet animationSet = new AnimationSet(true);
@@ -59,20 +73,68 @@ public class RevealatorHelper {
                 fromView.setVisibility(View.INVISIBLE);
             }
         });
+        animationSet.setAnimationListener(animationListener);
 
         // - Let's move !
         fromView.startAnimation(animationSet);
     }
 
     /**
+     * Helps to translate then show a view to another view.
+     *
+     * @param viewToTranslate                  View to translate..
+     * @param fromView                         From view.
+     * @param startDelay                       Start delay.
+     * @param duration                         Translate duration.
+     * @param curvedTranslation                Curved translation.
+     * @param controlPoint                     Curved angle.
+     * @param showFromViewInterpolatedDuration Show from view interpolated duration. Must be between 0 and 1.
+     */
+    static void showAndTranslateView(final View viewToTranslate, final View fromView, final int startDelay, final int duration, final boolean curvedTranslation, final PointF controlPoint, float showFromViewInterpolatedDuration, final Runnable animationEndCallBack) {
+        // - Determine translate delta.
+        final PointF delta = getCenterLocationsDelta(viewToTranslate, fromView);
+
+        // - Prepare show animation.
+        final ScaleAnimation showAnimation = new ScaleAnimation(0, viewToTranslate.getScaleX(), 0, viewToTranslate.getScaleY(), Animation.RELATIVE_TO_SELF, .5f, Animation.RELATIVE_TO_SELF, .5f);
+        showAnimation.setDuration((long) (duration * Math.min(1, Math.max(0, showFromViewInterpolatedDuration))));
+        showAnimation.setInterpolator(new BounceInterpolator());
+
+        // - Prepare translate animation.
+        Animation translateAnimation;
+        if (curvedTranslation) {
+            translateAnimation = new BezierTranslateAnimation(delta.x, 0, delta.y, 0, controlPoint);
+        } else {
+            translateAnimation = new TranslateAnimation(delta.x, 0, delta.y, 0);
+        }
+        translateAnimation.setDuration(duration);
+        translateAnimation.setStartOffset((long) (duration * 0.1f));
+        translateAnimation.setInterpolator(new DecelerateInterpolator());
+
+        // - Prepare animations set.
+        final AnimationSet animationSet = new AnimationSet(true);
+        animationSet.setStartOffset(startDelay);
+        animationSet.addAnimation(showAnimation);
+        animationSet.addAnimation(translateAnimation);
+        animationSet.setAnimationListener(new AnimationListenerAdapter() {
+            @Override
+            public void onAnimationEnd(Animation animation) {
+                viewToTranslate.setVisibility(View.VISIBLE);
+                animationEndCallBack.run();
+            }
+        });
+
+        // - Let's move !
+        viewToTranslate.startAnimation(animationSet);
+    }
+
+    /**
      * Helps to reveal a view.
      *
      * @param viewToReveal         View to reveal.
-     * @param startDelay           Start delay.
      * @param duration             Duration.
      * @param animationEndCallBack Callback fired on animation end.
      */
-    static void revealView(final View viewToReveal, final int startDelay, final int duration, final Runnable animationEndCallBack) {
+    static void revealView(final View viewToReveal, final int duration, final Runnable animationEndCallBack) {
         // - Determine circle location and size.
         int viewCenterX = (viewToReveal.getLeft() + viewToReveal.getRight()) / 2;
         int viewCenterY = (viewToReveal.getTop() + viewToReveal.getBottom()) / 2;
@@ -84,7 +146,6 @@ public class RevealatorHelper {
         final Animator circularRevealAnimator =
                 ViewAnimationUtils.createCircularReveal(viewToReveal, viewCenterX, viewCenterY, 0, finalRadius);
         circularRevealAnimator.setInterpolator(new DecelerateInterpolator());
-        circularRevealAnimator.setStartDelay(startDelay);
         circularRevealAnimator.setDuration(duration);
         circularRevealAnimator.addListener(new AnimatorListenerAdapter() {
             @Override
@@ -147,7 +208,7 @@ public class RevealatorHelper {
                 findAllVisibleChilds((ViewGroup) childView, ordoredChilds);
                 continue;
             }
-            if(childView.getVisibility() == View.VISIBLE) {
+            if (childView.getVisibility() == View.VISIBLE) {
                 ordoredChilds.add(childView);
             }
         }
@@ -173,5 +234,23 @@ public class RevealatorHelper {
             }
         }
     }
+
+    /**
+     * Get center locations delta between two views.
+     *
+     * @param viewA View A.
+     * @param viewB View B.
+     * @return Locations delta as a point.
+     */
+    private static PointF getCenterLocationsDelta(final View viewA, final View viewB) {
+        final int[] fromLocation = new int[2];
+        viewA.getLocationOnScreen(fromLocation);
+        final int[] toLocation = new int[2];
+        viewB.getLocationOnScreen(toLocation);
+        final int deltaX = toLocation[0] - fromLocation[0] + viewB.getMeasuredWidth() / 2 - viewA.getMeasuredWidth() / 2;
+        final int deltaY = toLocation[1] - fromLocation[1] + viewB.getMeasuredHeight() / 2 - viewA.getMeasuredHeight() / 2;
+        return new PointF(deltaX, deltaY);
+    }
+
 
 }
